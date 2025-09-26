@@ -48,12 +48,24 @@ func getEndpoint(pubkey string) (*net.UDPAddr, error) {
 	return addr, nil
 }
 
+func (d *daemon) RemoveIface(iface string) {
+	d.lock.Lock()
+	defer d.lock.Unlock()
+	for i, v := range d.ifaces {
+		if v == iface {
+			d.ifaces = append(d.ifaces[:i], d.ifaces[i+1:]...)
+			break
+		}
+	}
+}
+
 func (d *daemon) Sync() {
 	client, err := wgctrl.New()
 	if err != nil {
 		panic(err)
 	}
 	for {
+		d.lock.RLock()
 		for _, iface := range d.ifaces {
 			device, err := client.Device(iface)
 			if err != nil {
@@ -79,8 +91,9 @@ func (d *daemon) Sync() {
 				fmt.Printf("Failed to configure device %s: %s\n", iface, err)
 				continue
 			}
-
+			d.lock.RUnlock()
 		}
+
 		time.Sleep(time.Duration(config.Drill.Interval) * time.Second)
 	}
 	client.Close()
@@ -112,7 +125,10 @@ func (d *daemon) commu() { // 与CLI通信
 					return
 				} else {
 					d.lock.Lock()
-
+					for _, iface := range d.ifaces[1:] {
+						_ = append(d.ifaces, iface)
+						message += "append:" + iface + "\n"
+					}
 					d.lock.Unlock()
 				}
 			case "down": //todo
@@ -121,18 +137,24 @@ func (d *daemon) commu() { // 与CLI通信
 					return
 				} else {
 					d.lock.Lock()
-
+					for _, iface := range d.ifaces[1:] {
+						d.RemoveIface(iface)
+						message += "remove:" + iface + "\n"
+					}
 					d.lock.Unlock()
 				}
 			case "show": //todo
 				d.lock.RLock()
-
+				message += "Interfaces:\n"
+				for _, iface := range d.ifaces {
+					message += "  " + iface + "\n"
+				}
 				d.lock.RUnlock()
 			default:
 				message += "Unknown command\n"
 			}
 			//message += "\n"
-			c.Write([]byte(message))
+			_, _ = c.Write([]byte(message))
 		}(conn)
 	}
 }
