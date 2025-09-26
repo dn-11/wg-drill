@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"wg-natdrill/daemon"
+	"wg-drill-server/daemon"
 
 	"github.com/spf13/cobra"
 )

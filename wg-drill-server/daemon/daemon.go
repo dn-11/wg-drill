@@ -1,155 +1,182 @@
-// Package daemon exposes Run to start the background workers and unix control server.
+// Package daemon 启动一个守护进程，监听来自客户端的请求
+// 启动
+
 package daemon
 
 import (
-	"bufio"
 	"fmt"
-	"log"
 	"net"
+	"net/http"
 	"os"
-	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+	"wg-drill-server/config"
 
-	"wg-natdrill/config"
-	"wg-natdrill/util"
+	"golang.zx2c4.com/wireguard/wgctrl"
 )
 
-const socketPath = "/var/run/wg-natdrill.sock"
+const SocketPath = "/var/run/wg-drill-server.sock"
 
-var (
-	started = make(map[string]bool)
-	mu      sync.Mutex
-)
-
-func startIfaceWorker(iface string, interval time.Duration) bool {
-	mu.Lock()
-	if started[iface] {
-		mu.Unlock()
-		return false
-	}
-	started[iface] = true
-	mu.Unlock()
-	go func() {
-		for {
-			if err := util.SetEndpoint(iface); err != nil {
-				log.Printf("SetEndpoint error for %s: %v", iface, err)
-			}
-			time.Sleep(interval)
-		}
-	}()
-	log.Printf("started worker for iface: %s", iface)
-	return true
+type daemon struct {
+	ifaces       map[string]info
+	pubkeytoaddr map[string]*net.UDPAddr
+	lock         sync.RWMutex
 }
 
-func scanConfigLoop(interval time.Duration) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		ifaces := config.GetViper().GetStringSlice("ifaces")
-		for _, iface := range ifaces {
-			startIfaceWorker(iface, interval)
-		}
-		<-ticker.C
+type info []string
+
+func newDaemon() *daemon {
+	d := &daemon{}
+	d.ifaces = make(map[string]info)
+	for _, iface := range config.Drill.Iface {
+		d.ifaces[iface] = info{}
 	}
+	d.pubkeytoaddr = make(map[string]*net.UDPAddr)
+	return d
 }
 
-func handleConn(c net.Conn, interval time.Duration) {
-	defer func() {
-		if err := c.Close(); err != nil {
-			log.Printf("close conn error: %v", err)
-		}
-	}()
-	reader := bufio.NewReader(c)
-	line, err := reader.ReadString('\n')
+func (d *daemon) getpubkeys(iface string) ([]string, error) {
+	client, err := wgctrl.New()
 	if err != nil {
-		return
+		return nil, err
 	}
-	fields := strings.Fields(strings.TrimSpace(line))
-	if len(fields) >= 2 && strings.ToUpper(fields[0]) == "ADD" {
-		iface := fields[1]
-		if iface == "" {
-			if _, err := fmt.Fprintln(c, "ERR missing iface"); err != nil {
-				log.Printf("write response error: %v", err)
-			}
-			return
-		}
-		newStarted := startIfaceWorker(iface, interval)
-		if newStarted {
-			if _, err := fmt.Fprintln(c, "OK"); err != nil {
-				log.Printf("write response error: %v", err)
-			}
-		} else {
-			if _, err := fmt.Fprintln(c, "EXISTS"); err != nil {
-				log.Printf("write response error: %v", err)
-			}
-		}
-		return
+	defer client.Close()
+	device, err := client.Device(iface)
+	if err != nil {
+		return nil, err
 	}
-	if _, err := fmt.Fprintln(c, "ERR unknown command"); err != nil {
-		log.Printf("write response error: %v", err)
+	var pubkeys []string
+	for _, peer := range device.Peers {
+		pubkeys = append(pubkeys, peer.PublicKey.String())
 	}
+	return pubkeys, nil
 }
 
-func listenAndServeUnix(sock string, interval time.Duration) error {
-	if err := os.MkdirAll(filepath.Dir(sock), 0755); err != nil {
-		return err
-	}
-	if st, err := os.Stat(sock); err == nil && (st.Mode()&os.ModeSocket) != 0 {
-		// If socket exists, try connect to detect a running daemon
-		if conn, err := net.DialTimeout("unix", sock, 200*time.Millisecond); err == nil {
-			_ = conn.Close()
-			return fmt.Errorf("daemon already running (socket %s)", sock)
-		}
-		_ = os.Remove(sock)
-	}
-	ln, err := net.Listen("unix", sock)
+func (d *daemon) commu() { // 与CLI通信
+	os.Remove(SocketPath)
+	ln, err := net.Listen("unix", SocketPath)
 	if err != nil {
-		return err
+		panic(err)
 	}
-	_ = os.Chmod(sock, 0660)
-	log.Printf("control socket listening on %s", sock)
+	defer ln.Close()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				continue
-			}
-			return err
+			continue
 		}
-		go handleConn(conn, interval)
+		go func(c net.Conn) {
+			defer c.Close()
+			buf := make([]byte, 1024)
+			n, _ := c.Read(buf)
+			cmd := string(buf[:n])
+			params := strings.Fields(cmd)
+			message := ""
+			switch params[0] {
+			case "up":
+				if len(params) != 2 {
+					message += "Usage: up <interface>\n"
+					return
+				} else {
+					d.lock.Lock()
+					for _, iface := range params[1:] {
+						pubkeys, err := d.getpubkeys(iface)
+						if err != nil {
+							message += fmt.Sprintf("Failed to get pubkeys for interface %s: %v\n", iface, err)
+						} else {
+							d.ifaces[iface] = info(pubkeys)
+							message += fmt.Sprintf("Interface %s added with %d peers\n", iface, len(pubkeys))
+						}
+					}
+					d.lock.Unlock()
+				}
+			case "down":
+				if len(params) != 2 {
+					message += "Usage: down <interface>\n"
+					return
+				} else {
+					d.lock.Lock()
+					for _, iface := range params[1:] {
+						pubkeys := d.ifaces[iface]
+						for _, pubkey := range pubkeys {
+							delete(d.pubkeytoaddr, pubkey)
+							message += fmt.Sprintf("Removed pubkey %s from tracking\n", pubkey)
+						}
+						delete(d.ifaces, iface)
+					}
+					d.lock.Unlock()
+				}
+			case "show":
+				d.lock.RLock()
+				for iface, pubkeys := range d.ifaces {
+					message += fmt.Sprintf("Interface: %s\n", iface)
+					for _, pubkey := range pubkeys {
+						addr := d.pubkeytoaddr[pubkey]
+						message += fmt.Sprintf("  Pubkey %s Address: %s\n", pubkey, addr)
+					}
+				}
+				d.lock.RUnlock()
+			default:
+				message += "Unknown command\n"
+			}
+			//message += "\n"
+			c.Write([]byte(message))
+		}(conn)
 	}
 }
 
-// Run starts the daemon and blocks until SIGINT/SIGTERM.
+func (d *daemon) update() {
+	for {
+		for iface, _ := range d.ifaces {
+			d.lock.Lock()
+			client, err := wgctrl.New()
+			if err != nil {
+				continue
+			}
+			device, err := client.Device(iface)
+			if err != nil {
+				continue
+			}
+			var pubkeys []string
+			for _, peer := range device.Peers {
+				pubkeys = append(pubkeys, peer.PublicKey.String())
+			}
+			d.ifaces[iface] = pubkeys
+			for _, peer := range device.Peers {
+				d.pubkeytoaddr[peer.PublicKey.String()] = peer.Endpoint
+			}
+			client.Close()
+			d.lock.Unlock()
+		}
+		time.Sleep(time.Duration(config.Drill.Interval) * time.Second)
+	}
+}
+
+func (d *daemon) handler(w http.ResponseWriter, r *http.Request) {
+	pubkey := r.URL.Query().Get("pubkey")
+
+	addr := d.pubkeytoaddr[pubkey]
+	fmt.Println(pubkey)
+	if addr == nil || (addr.IP == nil && addr.Port == 0) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+	} else {
+		fmt.Fprintf(w, addr.String())
+	}
+	return
+}
+
+func (d *daemon) server() {
+	http.HandleFunc("/", d.handler)
+	fmt.Println("服务器启动，监听端口 ", config.Server.ListenPort)
+	http.ListenAndServe(fmt.Sprintf(":%d", config.Server.ListenPort), nil)
+}
+
 func Run() {
 	config.Init()
-	intervalSec := config.GetViper().GetInt("interval")
-	if intervalSec <= 0 {
-		intervalSec = 60
-	}
-	interval := time.Duration(intervalSec) * time.Second
-
-	// start from config
-	for _, iface := range config.GetViper().GetStringSlice("ifaces") {
-		startIfaceWorker(iface, interval)
-	}
-	// periodic scan for new ifaces in config
-	go scanConfigLoop(interval)
-	// control server
-	go func() {
-		if err := listenAndServeUnix(socketPath, interval); err != nil {
-			log.Fatalf("control server error: %v", err)
-		}
-	}()
-
-	// graceful shutdown
-	sigc := make(chan os.Signal, 1)
-	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
-	<-sigc
-	_ = os.Remove(socketPath)
-	log.Println("daemon exiting")
+	d := newDaemon()
+	go d.commu()
+	go d.update()
+	go d.server()
+	fmt.Println("Running wg-drill-server daemon...")
+	select {}
 }

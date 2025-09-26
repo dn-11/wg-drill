@@ -1,7 +1,7 @@
 package main
 
 import (
-	"wg-natdrill/cmd"
+	"wg-drill-server/cmd"
 )
 
 func main() {

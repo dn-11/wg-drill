@@ -1,4 +1,4 @@
-module wg-natdrill
+module wg-drill-server
 
 go 1.25
 
