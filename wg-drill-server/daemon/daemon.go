@@ -19,19 +19,21 @@ import (
 const SocketPath = "/var/run/wg-drill-server.sock"
 
 type daemon struct {
-	ifaces       map[string]info
+	ifaces       map[string]*info
 	pubkeytoaddr map[string]*net.UDPAddr
-	lock         sync.RWMutex
+
+	lock sync.RWMutex
 }
 
-type info []string
+type info struct {
+	pubkeys []string
+	quit    chan struct{}
+	started bool `default:"false"`
+}
 
 func newDaemon() *daemon {
 	d := &daemon{}
-	d.ifaces = make(map[string]info)
-	for _, iface := range config.Drill.Iface {
-		d.ifaces[iface] = info{}
-	}
+	d.ifaces = make(map[string]*info)
 	d.pubkeytoaddr = make(map[string]*net.UDPAddr)
 	return d
 }
@@ -84,7 +86,7 @@ func (d *daemon) commu() { // 与CLI通信
 						if err != nil {
 							message += fmt.Sprintf("Failed to get pubkeys for interface %s: %v\n", iface, err)
 						} else {
-							d.ifaces[iface] = info(pubkeys)
+							d.ifaces[iface] = &info{pubkeys: pubkeys, quit: make(chan struct{})}
 							message += fmt.Sprintf("Interface %s added with %d peers\n", iface, len(pubkeys))
 						}
 					}
@@ -97,7 +99,8 @@ func (d *daemon) commu() { // 与CLI通信
 				} else {
 					d.lock.Lock()
 					for _, iface := range params[1:] {
-						pubkeys := d.ifaces[iface]
+						d.ifaces[iface].quit <- struct{}{}
+						pubkeys := d.ifaces[iface].pubkeys
 						for _, pubkey := range pubkeys {
 							delete(d.pubkeytoaddr, pubkey)
 							message += fmt.Sprintf("Removed pubkey %s from tracking\n", pubkey)
@@ -108,9 +111,9 @@ func (d *daemon) commu() { // 与CLI通信
 				}
 			case "show":
 				d.lock.RLock()
-				for iface, pubkeys := range d.ifaces {
+				for iface, info := range d.ifaces {
 					message += fmt.Sprintf("Interface: %s\n", iface)
-					for _, pubkey := range pubkeys {
+					for _, pubkey := range info.pubkeys {
 						addr := d.pubkeytoaddr[pubkey]
 						message += fmt.Sprintf("  Pubkey %s Address: %s\n", pubkey, addr)
 					}
@@ -120,7 +123,7 @@ func (d *daemon) commu() { // 与CLI通信
 				message += "Unknown command\n"
 			}
 			//message += "\n"
-			c.Write([]byte(message))
+			_, _ = c.Write([]byte(message))
 		}(conn)
 	}
 }
@@ -141,7 +144,7 @@ func (d *daemon) update() {
 			for _, peer := range device.Peers {
 				pubkeys = append(pubkeys, peer.PublicKey.String())
 			}
-			d.ifaces[iface] = pubkeys
+			d.ifaces[iface].pubkeys = pubkeys
 			for _, peer := range device.Peers {
 				d.pubkeytoaddr[peer.PublicKey.String()] = peer.Endpoint
 			}
@@ -166,9 +169,47 @@ func (d *daemon) handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *daemon) server() {
-	http.HandleFunc("/", d.handler)
-	fmt.Println("服务器启动，监听端口 ", config.Server.ListenPort)
-	http.ListenAndServe(fmt.Sprintf(":%d", config.Server.ListenPort), nil)
+	go func(port int) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/", d.handler)
+		srv := &http.Server{
+			Addr:    fmt.Sprintf(":%d", port), // 可自定义端口
+			Handler: mux,
+		}
+		srv.ListenAndServe()
+	}(config.Server.ListenPort)
+	for {
+		client, err := wgctrl.New()
+		if err != nil {
+			time.Sleep(time.Duration(config.Drill.Interval) * time.Second)
+			continue
+		}
+		d.lock.Lock()
+		for iface, info := range d.ifaces {
+			if !info.started {
+				device, err := client.Device(iface)
+				if err != nil {
+					continue
+				}
+				mux := http.NewServeMux()
+				mux.HandleFunc("/", d.handler)
+				srv := &http.Server{
+					Addr:    fmt.Sprintf(":%d", device.ListenPort), // 可自定义端口
+					Handler: mux,
+				}
+				go func(s *http.Server, quit chan struct{}) {
+					go func() {
+						<-quit
+						s.Close()
+					}()
+					s.ListenAndServe()
+				}(srv, info.quit)
+				info.started = true
+			}
+		}
+		d.lock.Unlock()
+		time.Sleep(time.Duration(5) * time.Second)
+	}
 }
 
 func Run() {
