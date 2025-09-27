@@ -18,7 +18,7 @@ Running:
 wg-drill-[client/server] install
 ````
 
-Useage:
+## Useage:
 
 reference config file below and [jwhited's blog](https://www.jordanwhited.com/posts/wireguard-endpoint-discovery-nat-traversal/)
 
