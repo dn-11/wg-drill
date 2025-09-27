@@ -10,12 +10,28 @@ import (
 	"wg-drill-client/util"
 )
 
-const binPath = "/usr/local/bin/wg-drill-client"
-const daemonPath = "/usr/local/bin/wg-drill-client daemon"
+var binPath = ""
+var scriptPath = ""
+var daemonPath = ""
+
 const dirPath = "/etc/wg-drill-client"
 const configPath = "/etc/wg-drill-client/config.toml"
 
+func initPlatform() {
+	systemPlatform := util.JudgePlatform()
+	if systemPlatform == "procd" {
+		binPath = "/usr/sbin/wg-drill-client"
+		scriptPath = "/etc/init.d/wg-drill-client"
+		daemonPath = binPath + " daemon"
+	} else if systemPlatform == "systemd" {
+		binPath = "/usr/local/bin/wg-drill-client"
+		scriptPath = "/etc/systemd/system/wg-drill-client.service"
+		daemonPath = binPath + " daemon"
+	}
+}
+
 func Install() {
+	initPlatform()
 	file, err := exec.LookPath(os.Args[0])
 	if err != nil && !errors.Is(err, exec.ErrDot) {
 		fmt.Printf("fail to get binary file path: %v\n", err)
@@ -107,7 +123,7 @@ start_service() {
 
 	configfile := `
 [server]
-endpoing = "example.com:14514"
+endpoint = "example.com:14514"
 
 [drill]
 enable = true
@@ -122,30 +138,20 @@ interval = 10
 }
 
 func UnInstall() {
-	platform := util.JudgePlatform()
-	switch platform {
-	case "systemd":
-		servicePath := "/etc/systemd/system/wg-drill-client.service"
-		exec.Command("systemctl", "stop", "wg-drill-client").Run()
-		exec.Command("systemctl", "disable", "wg-drill-client").Run()
-		os.Remove(servicePath)
-		exec.Command("systemctl", "daemon-reload").Run()
-		fmt.Println("systemd uninstalled")
-	case "procd":
-		scriptPath := "/etc/init.d/wg-drill-client"
-		exec.Command(scriptPath, "stop").Run()
-		exec.Command(scriptPath, "disable").Run()
-		os.Remove(scriptPath)
-		fmt.Println("procd uninstalled")
-	default:
-		fmt.Println("unsupported platform type")
+	initPlatform()
+	if err := os.Remove(scriptPath); err != nil {
+		fmt.Printf("fail to remove script file: %v\n", err)
+	} else {
+		fmt.Println("script file removed")
 	}
 	if err := os.Remove(binPath); err != nil {
 		fmt.Printf("fail to remove binary file: %v\n", err)
+	} else {
+		fmt.Println("binary file removed")
 	}
-	fmt.Println("binary file removed")
 	if err := os.RemoveAll(dirPath); err != nil {
 		fmt.Printf("fail to remove config file: %v\n", err)
+	} else {
+		fmt.Println("config directory removed")
 	}
-	fmt.Println("config file removed")
 }
