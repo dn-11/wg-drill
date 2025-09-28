@@ -29,9 +29,9 @@ func newDaemon() *daemon {
 	return d
 }
 
-func getEndpoint(pubkey string) (*net.UDPAddr, error) {
+func getEndpoint(endpoint *net.UDPAddr, pubkey string) (*net.UDPAddr, error) {
 	encoded := url.QueryEscape(pubkey)
-	requestUrl := "http://" + config.Server.Endpoint + "/?pubkey=" + encoded
+	requestUrl := "http://" + endpoint.String() + "/?pubkey=" + encoded
 	resp, err := http.Get(requestUrl)
 	if err != nil {
 		return nil, err
@@ -88,8 +88,17 @@ func (d *daemon) Sync() {
 				//fmt.Printf("Failed to get device %s for %s: %s\n", iface, iface, err)
 				continue
 			}
+			var stunendpoint *net.UDPAddr
 			for _, peer := range device.Peers {
-				addr, err := getEndpoint(peer.PublicKey.String())
+				if peer.AllowedIPs == nil || len(peer.AllowedIPs) == 0 {
+					stunendpoint = peer.Endpoint
+				}
+			}
+			for _, peer := range device.Peers {
+				if peer.AllowedIPs == nil || len(peer.AllowedIPs) == 0 {
+					continue
+				}
+				addr, err := getEndpoint(stunendpoint, peer.PublicKey.String())
 				if err != nil {
 					//fmt.Printf("Failed to get endpoint for %s: %s\n", peer.PublicKey.String(), err)
 					continue
