@@ -15,7 +15,7 @@ var Server struct {
 
 var Drill struct {
 	Enable   bool
-	Iface    []string
+	Iface    string
 	Interval int
 }
 
@@ -53,6 +53,6 @@ func update() {
 	Server.ListenAddr = viper.GetString("server.listenaddr")
 	Server.ListenPort = viper.GetInt("server.listenport")
 	Drill.Enable = viper.GetBool("drill.enable")
-	Drill.Iface = viper.GetStringSlice("drill.iface")
+	Drill.Iface = viper.GetString("drill.iface")
 	Drill.Interval = viper.GetInt("drill.interval")
 }

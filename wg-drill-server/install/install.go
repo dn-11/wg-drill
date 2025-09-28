@@ -31,6 +31,7 @@ func initPlatform() {
 }
 
 func Install() {
+	initPlatform()
 	file, err := exec.LookPath(os.Args[0])
 	if err != nil && !errors.Is(err, exec.ErrDot) {
 		fmt.Printf("fail to get binary file path: %v\n", err)
@@ -56,6 +57,8 @@ func Install() {
 			return
 		}
 	}
+
+	fmt.Printf("copy binary file to %s\n", binPath)
 
 	fp, err := os.OpenFile(binPath, os.O_CREATE|os.O_RDWR, 0755)
 	if err != nil {
@@ -126,7 +129,7 @@ listenport = 14514
 
 [drill]
 enable = true
-iface = []
+iface = "your_wg_interface"
 interval = 10
 `
 	if err := os.WriteFile(configPath, []byte(configfile), 0644); err != nil {

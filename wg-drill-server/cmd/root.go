@@ -14,10 +14,10 @@ var RootCmd = &cobra.Command{
 }
 
 func init() {
-	RootCmd.AddCommand(DownCmd)
-	RootCmd.AddCommand(DaemonCmd)
-	RootCmd.AddCommand(UpCmd)
 	RootCmd.AddCommand(ShowCmd)
+	RootCmd.AddCommand(DaemonCmd)
+	RootCmd.AddCommand(AddCmd)
+	RootCmd.AddCommand(DelCmd)
 	RootCmd.AddCommand(InstallCmd)
 	RootCmd.AddCommand(UnInstallCmd)
 }
