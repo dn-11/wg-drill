@@ -1,6 +1,3 @@
-// Package daemon 启动一个守护进程，监听来自客户端的请求
-// 启动
-
 package daemon
 
 import (
@@ -8,10 +5,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"wg-drill-server/config"
+	"wg-drill-server/wg"
 
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -229,10 +229,21 @@ func (d *daemon) server() {
 
 func Run() {
 	config.Init()
+	wg.StartWg()
 	d := newDaemon()
 	go d.commu()
 	go d.update()
 	go d.server()
 	fmt.Println("Running wg-drill-server daemon...")
-	select {}
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	fmt.Println("Shutting down...")
+
+	// 清理工作：删除 socket 文件，停止 wireguard （如果有实现）
+	os.Remove(SocketPath)
+	wg.StopWg()
+
+	time.Sleep(300 * time.Millisecond)
+	os.Exit(0)
 }
