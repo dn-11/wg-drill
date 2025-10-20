@@ -123,14 +123,15 @@ start_service() {
 	}
 
 	configfile := `
-[server]
-listenaddr = "0.0.0.0"
-listenport = 14514
-
 [drill]
 enable = true
 iface = "your_wg_interface"
 interval = 10
+
+[wireguard]
+privatekey = "your_wireguard_private_key"
+listenport = 14514
+peerpubkeys = ["peer_public_key1", "peer_public_key2"]
 `
 	if err := os.WriteFile(configPath, []byte(configfile), 0644); err != nil {
 		fmt.Printf("fail to write config file: %v\n", err)

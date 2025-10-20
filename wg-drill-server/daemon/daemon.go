@@ -47,7 +47,7 @@ func newDaemon() *daemon {
 		fmt.Printf("Error getting device: %s\n", err)
 		panic(err)
 	}
-	d.port = device.ListenPort
+	d.port = config.WireGuard.ListenPort
 	d.pubkeytoaddr = make(map[string]*net.UDPAddr)
 	err = d.initPeer()
 	if err != nil {
@@ -229,7 +229,11 @@ func (d *daemon) server() {
 
 func Run() {
 	config.Init()
-	wg.StartWg()
+	err := wg.StartWg()
+	if err != nil {
+		fmt.Println(err)
+		panic(err)
+	}
 	d := newDaemon()
 	go d.commu()
 	go d.update()

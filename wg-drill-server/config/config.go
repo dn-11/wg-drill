@@ -42,8 +42,9 @@ func Init() {
 
 	viper.SetDefault("drill.enable", true)
 	viper.SetDefault("drill.interval", 10)
-	viper.SetDefault("wireguard.privatekey", WireGuard.PrivateKey)
-	viper.SetDefault("wireguard.listenport", WireGuard.ListenPort)
+	viper.SetDefault("wireguard.privatekey", "")
+	viper.SetDefault("wireguard.listenport", 14514)
+	viper.SetDefault("wireguard.peerpubkeys", []string{})
 
 	update()
 
@@ -56,8 +57,10 @@ func Init() {
 }
 
 func update() {
-
 	Drill.Enable = viper.GetBool("drill.enable")
 	Drill.Iface = viper.GetString("drill.iface")
 	Drill.Interval = viper.GetInt("drill.interval")
+	WireGuard.PrivateKey = viper.GetString("wireguard.privatekey")
+	WireGuard.ListenPort = viper.GetInt("wireguard.listenport")
+	WireGuard.PeerPubkeys = viper.GetStringSlice("wireguard.peerpubkeys")
 }

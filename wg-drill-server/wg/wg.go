@@ -10,16 +10,28 @@ import (
 )
 
 func StartWg() error {
-	// Placeholder for wg-related utility functions
 	ifaceName := config.Drill.Iface
+
+	l, err := netlink.LinkByName(ifaceName)
+	if err == nil {
+		_ = netlink.LinkDel(l)
+	}
 
 	wg := &netlink.Wireguard{
 		LinkAttrs: netlink.LinkAttrs{Name: ifaceName},
 	}
-	err := netlink.LinkAdd(wg)
+	err = netlink.LinkAdd(wg)
 	if err != nil {
 		return err
 	}
+
+	link, _ := netlink.LinkByName(ifaceName)
+
+	if err := netlink.LinkSetUp(link); err != nil {
+		return err
+	}
+
+	netlink.LinkSetTxQLen(link, 1000)
 
 	key, err := wgtypes.ParseKey(config.WireGuard.PrivateKey)
 	if err != nil {
@@ -32,14 +44,17 @@ func StartWg() error {
 	defer client.Close()
 
 	cfg := wgtypes.Config{
-		PrivateKey: &key,
-		Peers:      []wgtypes.PeerConfig{},
+		PrivateKey:   &key,
+		ListenPort:   &config.WireGuard.ListenPort,
+		ReplacePeers: true,
+
+		Peers: []wgtypes.PeerConfig{},
 	}
 
 	for _, peerPubKeyStr := range config.WireGuard.PeerPubkeys {
 		peerKey, err := wgtypes.ParseKey(peerPubKeyStr)
 		if err != nil {
-			return err
+			continue
 		}
 		peerCfg := wgtypes.PeerConfig{
 			PublicKey: peerKey,
@@ -52,6 +67,7 @@ func StartWg() error {
 		return err
 	}
 	return nil
+
 }
 
 func StopWg() error {
