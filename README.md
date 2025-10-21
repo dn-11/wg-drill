@@ -1,6 +1,6 @@
 # wg-drill
 
-Inspired and reference [wgcf](https://github.com/jwhited/wgsd).
+Inspired and reference [wgsd](https://github.com/jwhited/wgsd).
 
 Simplify for dn11.
 
