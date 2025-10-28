@@ -52,6 +52,8 @@ builds:
 
 archives:
   - id: wg-drill-client
+    builds:
+      - wg-drill-client
     formats: [tar.gz]
     # this name template makes the OS and Arch compatible with the results of `uname`.
     name_template: >-
@@ -66,6 +68,8 @@ archives:
         formats: [zip]
 
   - id: wg-drill-server
+    builds:
+      - wg-drill-server
     formats: [tar.gz]
     # this name template makes the OS and Arch compatible with the results of `uname`.
     name_template: >-
@@ -93,7 +97,9 @@ upx:
     enabled: true
 
     # Filter by build ID.
-    ids: [release]
+    ids:
+      - wg-drill-client
+      - wg-drill-server
 
     goarch:
       - amd64
@@ -111,6 +117,5 @@ upx:
 
     # Whether to try all methods and filters (slow).
     brute: false
-
-checksum:
-  name_template: "{{ .ProjectName }}-client-{{ .Version }}_checksums.txt"
+# checksum:
+#   name_template: "{{ .ProjectName }}-client-{{ .Version }}_checksums.txt"
