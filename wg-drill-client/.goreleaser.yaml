@@ -18,6 +18,7 @@ before:
 builds:
   - env:
       - CGO_ENABLED=0
+    binary: wg-drill-client
     goos:
       - linux
     goarch:
@@ -67,7 +68,7 @@ upx:
 
     # Compress argument.
     # Valid options are from '1' (faster) to '9' (better), and 'best'.
-    compress: '9'
+    compress: "9"
 
     # Whether to try LZMA (slower).
     lzma: false
