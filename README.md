@@ -46,6 +46,6 @@ PersistentKeepalive = 3
 ````
 
 ## ToDo
-- [ ] Simplfy ways to get endpoint(We use http temporary and need to config server endpoint.This version would be terrible while having multi server) 
+- [x] Simplfy ways to get endpoint(We use http temporary and need to config server endpoint.This version would be terrible while having multi server) 
 - [ ] Better ways to close server
 - [ ] Log

@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -19,13 +20,23 @@ import (
 const SocketPath = "/var/run/wg-drill-client.sock"
 
 type daemon struct {
-	ifaces []string
-	lock   sync.RWMutex
+	ifaces      []string
+	lock        sync.RWMutex
+	MinRandPort int
+	MaxRandPort int
 }
 
 func newDaemon() *daemon {
 	d := &daemon{}
 	d.ifaces = config.Drill.Iface
+	min := config.Drill.MinRandPort
+	max := config.Drill.MaxRandPort
+	if min <= 0 || max <= 0 || max < min {
+		min = 40000
+		max = 65535
+	}
+	d.MinRandPort = min
+	d.MaxRandPort = max
 	return d
 }
 
@@ -95,37 +106,51 @@ func (d *daemon) Sync() {
 				}
 			}
 			fmt.Println("Interface:", iface, "Using STUN endpoint:", stunendpoint.String())
-			for _, peer := range device.Peers {
-				if peer.AllowedIPs == nil || len(peer.AllowedIPs) == 0 {
-					continue
-				}
-				addr, err := getEndpoint(stunendpoint, peer.PublicKey.String())
-				//fmt.Println(addr, err)
-				if err != nil {
-					//fmt.Printf("Failed to get endpoint for %s: %s\n", peer.PublicKey.String(), err)
-					continue
-				}
-				//fmt.Printf("Found peer %s with endpoint %s\n", peer.PublicKey, addr.String())
-				peerConfig := wgtypes.PeerConfig{
-					PublicKey:  peer.PublicKey,
-					UpdateOnly: true,
-					Endpoint:   addr,
-				}
-				deviceConfig := wgtypes.Config{
-					PrivateKey:   &device.PrivateKey,
-					ReplacePeers: false,
-					Peers:        []wgtypes.PeerConfig{peerConfig},
-				}
-				if device.FirewallMark > 0 {
-					deviceConfig.FirewallMark = &device.FirewallMark
-				}
-				err = client.ConfigureDevice(iface, deviceConfig)
-				if err != nil {
-					//fmt.Printf("Failed to configure device %s for %s: %s\n", iface, iface, err)
-					continue
-				}
+			deviceConfig := wgtypes.Config{
+				PrivateKey:   &device.PrivateKey,
+				ReplacePeers: false,
+				Peers:        []wgtypes.PeerConfig{},
 			}
 
+			if device.FirewallMark > 0 {
+				deviceConfig.FirewallMark = &device.FirewallMark
+			}
+
+			for _, peer := range device.Peers { // 遍历所有peer
+				if peer.AllowedIPs == nil || len(peer.AllowedIPs) == 0 { //检测是否卡nat,如果lasthandshake超过timeout重新设置listenport
+					if time.Since(peer.LastHandshakeTime) > time.Duration(config.Drill.Timeout)*time.Second {
+						min := d.MinRandPort
+						max := d.MaxRandPort
+						//if min <= 0 || max <= 0 || max < min {
+						//	min = 40000
+						//	max = 65535
+						//}
+						newPort := rand.Intn(max-min+1) + min
+						deviceConfig.ListenPort = &newPort
+					}
+				} else { //更新endpoint
+					addr, err := getEndpoint(stunendpoint, peer.PublicKey.String())
+					//fmt.Println(addr, err)
+					if err != nil {
+						//fmt.Printf("Failed to get endpoint for %s: %s\n", peer.PublicKey.String(), err)
+						continue
+					}
+					//fmt.Printf("Found peer %s with endpoint %s\n", peer.PublicKey, addr.String())
+					peerConfig := wgtypes.PeerConfig{
+						PublicKey:  peer.PublicKey,
+						UpdateOnly: true,
+						Endpoint:   addr,
+					}
+
+					deviceConfig.Peers = append(deviceConfig.Peers, peerConfig)
+				}
+
+			}
+			err = client.ConfigureDevice(iface, deviceConfig)
+			if err != nil {
+				//fmt.Printf("Failed to configure device %s for %s: %s\n", iface, iface, err)
+				continue
+			}
 		}
 		client.Close()
 		d.lock.RUnlock()
