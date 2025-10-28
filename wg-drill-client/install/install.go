@@ -129,6 +129,9 @@ endpoint = "example.com:14514"
 enable = true
 iface = []
 interval = 10
+timeout = 5
+minrandport = 20000
+maxrandport = 40000
 `
 	if err := os.WriteFile(configPath, []byte(configfile), 0644); err != nil {
 		fmt.Printf("fail to write config file: %v\n", err)

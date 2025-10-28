@@ -26,6 +26,17 @@ type daemon struct {
 	MaxRandPort int
 }
 
+func checkPort(port int) (bool, error) {
+	addr := fmt.Sprintf(":%d", port)
+	conn, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		return false, err
+	} else {
+		conn.Close()
+	}
+	return true, nil
+}
+
 func newDaemon() *daemon {
 	d := &daemon{}
 	d.ifaces = config.Drill.Iface
@@ -126,6 +137,14 @@ func (d *daemon) Sync() {
 						//	max = 65535
 						//}
 						newPort := rand.Intn(max-min+1) + min
+						for {
+							ok, _ := checkPort(newPort)
+							if ok {
+								break
+							} else {
+								newPort = rand.Intn(max-min+1) + min
+							}
+						}
 						deviceConfig.ListenPort = &newPort
 					}
 				} else { //更新endpoint
