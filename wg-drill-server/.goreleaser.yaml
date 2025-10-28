@@ -75,3 +75,5 @@ upx:
 
     # Whether to try all methods and filters (slow).
     brute: false
+checksum:
+  name_template: "{{ .ProjectName }}-server-{{ .Version }}_checksums.txt"
