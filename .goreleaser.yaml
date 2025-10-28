@@ -10,15 +10,36 @@ version: 2
 
 before:
   hooks:
-    # You may remove this if you don't use go modules.
-    - go mod tidy
-    # you may remove this if you don't need go generate
-    - go generate ./...
+    # Run go mod tidy for each subproject
+    - sh -c 'cd wg-drill-client && go mod tidy'
+    - sh -c 'cd wg-drill-server && go mod tidy'
+    # Run go generate for each subproject
+    - sh -c 'cd wg-drill-client && go generate ./...'
+    - sh -c 'cd wg-drill-server && go generate ./...'
 
 builds:
-  - env:
+  - id: wg-drill-client
+    main: main.go
+    binary: wg-drill-client
+    dir: wg-drill-client
+    env:
       - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - "386"
+      - arm
+      - arm64
+      - mips
+      - mips64
+
+  - id: wg-drill-server
+    main: main.go
     binary: wg-drill-server
+    dir: wg-drill-server
+    env:
+      - CGO_ENABLED=0
     goos:
       - linux
     goarch:
@@ -30,7 +51,22 @@ builds:
       - mips64
 
 archives:
-  - formats: [tar.gz]
+  - id: wg-drill-client
+    formats: [tar.gz]
+    # this name template makes the OS and Arch compatible with the results of `uname`.
+    name_template: >-
+      wg-drill-client-
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    # use zip for windows archives
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+  - id: wg-drill-server
+    formats: [tar.gz]
     # this name template makes the OS and Arch compatible with the results of `uname`.
     name_template: >-
       wg-drill-server-
@@ -75,5 +111,6 @@ upx:
 
     # Whether to try all methods and filters (slow).
     brute: false
+
 checksum:
-  name_template: "{{ .ProjectName }}-server-{{ .Version }}_checksums.txt"
+  name_template: "{{ .ProjectName }}-client-{{ .Version }}_checksums.txt"
