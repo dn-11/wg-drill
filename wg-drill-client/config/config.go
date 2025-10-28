@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"log"
 	"os"
 
@@ -14,9 +13,12 @@ var Server struct {
 }
 
 var Drill struct {
-	Enable   bool
-	Iface    []string
-	Interval int
+	Enable      bool
+	Iface       []string
+	Interval    int
+	Timeout     int
+	MinRandPort int
+	MaxRandPort int
 }
 
 const file = "/etc/wg-drill-client/config.toml"
@@ -36,10 +38,11 @@ func Init() {
 
 	viper.SetDefault("drill.enable", true)
 	viper.SetDefault("drill.interval", 10)
+	viper.SetDefault("drill.timeout", 5)
 
-	if viper.IsSet("server.endpoint") == false {
-		panic(errors.New("server.endpoint is not set in config file"))
-	}
+	//if viper.IsSet("server.endpoint") == false {
+	//	panic(errors.New("server.endpoint is not set in config file"))
+	//}
 
 	update()
 
@@ -54,6 +57,7 @@ func Init() {
 func update() {
 	Server.Endpoint = viper.GetString("server.endpoint")
 	Drill.Enable = viper.GetBool("drill.enable")
-	Drill.Iface = viper.GetStringSlice("drill.iface")
+	//Drill.Iface = viper.GetStringSlice("drill.iface")
 	Drill.Interval = viper.GetInt("drill.interval")
+	Drill.Timeout = viper.GetInt("drill.timeout")
 }
