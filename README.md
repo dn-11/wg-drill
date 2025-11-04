@@ -49,3 +49,11 @@ PersistentKeepalive = 3
 - [x] Simplfy ways to get endpoint(We use http temporary and need to config server endpoint.This version would be terrible while having multi server) 
 - [ ] Better ways to close server
 - [ ] Log
+
+## Project DN11
+
+这个项目是去中心化网络 DN11 的一部分。
+
+This repo now included in Project DN11, a decentralized network.
+
+![image](https://github.com/user-attachments/assets/9d1b46b3-41d3-4bdb-8f89-ddf911531f37)
