@@ -128,7 +128,7 @@ func (d *daemon) Sync() {
 			}
 
 			for _, peer := range device.Peers { // 遍历所有peer
-				if peer.AllowedIPs == nil || len(peer.AllowedIPs) == 0 { //检测是否卡nat,如果lasthandshake超过timeout重新设置listenport
+				if peer.AllowedIPs == nil && len(peer.AllowedIPs) == 0 && peer.Endpoint.String() != "" { //检测是否卡nat,如果lasthandshake超过timeout重新设置listenport
 					if time.Since(peer.LastHandshakeTime) > time.Duration(config.Drill.Timeout)*time.Second {
 						min := d.MinRandPort
 						max := d.MaxRandPort
