@@ -38,7 +38,7 @@ func Init() {
 
 	viper.SetDefault("drill.enable", true)
 	viper.SetDefault("drill.interval", 10)
-	viper.SetDefault("drill.timeout", 5)
+	viper.SetDefault("drill.timeout", 600)
 
 	//if viper.IsSet("server.endpoint") == false {
 	//	panic(errors.New("server.endpoint is not set in config file"))

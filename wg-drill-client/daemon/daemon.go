@@ -24,6 +24,7 @@ type daemon struct {
 	lock        sync.RWMutex
 	MinRandPort int
 	MaxRandPort int
+	ifaceStart  map[string]time.Time
 }
 
 func checkPort(port int) (bool, error) {
@@ -40,6 +41,11 @@ func checkPort(port int) (bool, error) {
 func newDaemon() *daemon {
 	d := &daemon{}
 	d.ifaces = config.Drill.Iface
+	d.ifaceStart = make(map[string]time.Time)
+	now := time.Now()
+	for _, iface := range d.ifaces {
+		d.ifaceStart[iface] = now
+	}
 	min := config.Drill.MinRandPort
 	max := config.Drill.MaxRandPort
 	if min <= 0 || max <= 0 || max < min {
@@ -80,6 +86,7 @@ func (d *daemon) RemoveIface(iface string) {
 	for i, v := range d.ifaces {
 		if v == iface {
 			d.ifaces = append(d.ifaces[:i], d.ifaces[i+1:]...)
+			delete(d.ifaceStart, iface)
 			break
 		}
 	}
@@ -96,83 +103,107 @@ func contains(slice []string, item string) bool {
 
 func (d *daemon) Sync() {
 	for {
-		d.lock.RLock()
 		client, err := wgctrl.New()
 		if err != nil {
-			//fmt.Printf("Failed to open wgctrl: %s\n", err)
-			d.lock.RUnlock()
 			time.Sleep(time.Duration(config.Drill.Interval) * time.Second)
 			continue
 		}
-		for _, iface := range d.ifaces {
+
+		timeoutDur := time.Duration(config.Drill.Timeout) * time.Second
+		startupGrace := 30 * time.Second
+		if timeoutDur*2 > startupGrace {
+			startupGrace = timeoutDur * 2
+		}
+
+		// Snapshot ifaces + ifaceStart under write lock, then process unlocked.
+		d.lock.Lock()
+		ifaces := append([]string(nil), d.ifaces...)
+		startMap := make(map[string]time.Time, len(ifaces))
+		now := time.Now()
+		for _, iface := range ifaces {
+			t, ok := d.ifaceStart[iface]
+			if !ok {
+				t = now
+				d.ifaceStart[iface] = t
+			}
+			startMap[iface] = t
+		}
+		d.lock.Unlock()
+
+		for _, iface := range ifaces {
+			ifaceStart := startMap[iface]
+
 			device, err := client.Device(iface)
 			if err != nil {
-				//fmt.Printf("Failed to get device %s for %s: %s\n", iface, iface, err)
 				continue
 			}
+
 			var stunendpoint *net.UDPAddr
 			for _, peer := range device.Peers {
 				if peer.AllowedIPs == nil || len(peer.AllowedIPs) == 0 {
 					stunendpoint = peer.Endpoint
 				}
 			}
-			fmt.Println("Interface:", iface, "Using STUN endpoint:", stunendpoint.String())
+
+			if stunendpoint != nil {
+				fmt.Println("Interface:", iface, "Using STUN endpoint:", stunendpoint.String())
+			} else {
+				fmt.Println("Interface:", iface, "Using STUN endpoint: <nil>")
+			}
+
 			deviceConfig := wgtypes.Config{
 				PrivateKey:   &device.PrivateKey,
 				ReplacePeers: false,
 				Peers:        []wgtypes.PeerConfig{},
 			}
-
 			if device.FirewallMark > 0 {
 				deviceConfig.FirewallMark = &device.FirewallMark
 			}
 
-			for _, peer := range device.Peers { // 遍历所有peer
-				if peer.AllowedIPs == nil && len(peer.AllowedIPs) == 0 && peer.Endpoint.String() != "" { //检测是否卡nat,如果lasthandshake超过timeout重新设置listenport
-					if time.Since(peer.LastHandshakeTime) > time.Duration(config.Drill.Timeout)*time.Second {
-						min := d.MinRandPort
-						max := d.MaxRandPort
-						//if min <= 0 || max <= 0 || max < min {
-						//	min = 40000
-						//	max = 65535
-						//}
-						newPort := rand.Intn(max-min+1) + min
-						for {
-							ok, _ := checkPort(newPort)
-							if ok {
-								break
-							} else {
-								newPort = rand.Intn(max-min+1) + min
-							}
+			for _, peer := range device.Peers {
+				if (peer.AllowedIPs == nil || len(peer.AllowedIPs) == 0) && peer.Endpoint != nil {
+					if peer.LastHandshakeTime.IsZero() {
+						if time.Since(ifaceStart) < startupGrace {
+							continue
 						}
-						deviceConfig.ListenPort = &newPort
-					}
-				} else { //更新endpoint
-					addr, err := getEndpoint(stunendpoint, peer.PublicKey.String())
-					//fmt.Println(addr, err)
-					if err != nil {
-						//fmt.Printf("Failed to get endpoint for %s: %s\n", peer.PublicKey.String(), err)
+					} else if time.Since(peer.LastHandshakeTime) <= timeoutDur {
 						continue
 					}
-					//fmt.Printf("Found peer %s with endpoint %s\n", peer.PublicKey, addr.String())
+
+					min := d.MinRandPort
+					max := d.MaxRandPort
+					newPort := rand.Intn(max-min+1) + min
+					for {
+						ok, _ := checkPort(newPort)
+						if ok {
+							break
+						}
+						newPort = rand.Intn(max-min+1) + min
+					}
+					deviceConfig.ListenPort = &newPort
+				} else {
+					if stunendpoint == nil {
+						continue
+					}
+					addr, err := getEndpoint(stunendpoint, peer.PublicKey.String())
+					if err != nil {
+						continue
+					}
 					peerConfig := wgtypes.PeerConfig{
 						PublicKey:  peer.PublicKey,
 						UpdateOnly: true,
 						Endpoint:   addr,
 					}
-
 					deviceConfig.Peers = append(deviceConfig.Peers, peerConfig)
 				}
-
 			}
-			err = client.ConfigureDevice(iface, deviceConfig)
-			if err != nil {
-				//fmt.Printf("Failed to configure device %s for %s: %s\n", iface, iface, err)
+
+			if err := client.ConfigureDevice(iface, deviceConfig); err != nil {
 				continue
 			}
 		}
+
 		client.Close()
-		d.lock.RUnlock()
 		time.Sleep(time.Duration(config.Drill.Interval) * time.Second)
 	}
 }
@@ -209,6 +240,7 @@ func (d *daemon) commu() { // 与CLI通信
 						}
 						d.lock.Lock()
 						d.ifaces = append(d.ifaces, iface)
+						d.ifaceStart[iface] = time.Now()
 						message += "append:" + iface + "\n"
 						d.lock.Unlock()
 

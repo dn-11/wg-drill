@@ -129,7 +129,7 @@ endpoint = "example.com:14514"
 enable = true
 iface = []
 interval = 10
-timeout = 5
+timeout = 600
 minrandport = 20000
 maxrandport = 40000
 `
